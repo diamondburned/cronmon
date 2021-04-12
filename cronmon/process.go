@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"git.unix.lgbt/diamondburned/cronmon/cronmon/internal/exec"
+	"git.unix.lgbt/diamondburned/cronmon/cronmon/exec"
 	"github.com/pkg/errors"
 )
 
@@ -98,7 +98,7 @@ func (proc *Process) start() {
 		// it.
 		proc.dead <- struct{}{}
 
-		proc.j.Write(EventProcessSpawnError{
+		proc.j.Write(&EventProcessSpawnError{
 			File:   proc.file,
 			Reason: err.Error(),
 		})
@@ -116,7 +116,7 @@ func (proc *Process) startWaiting() {
 	// process won't be aware of the running process. There's not really a way
 	// around this.
 
-	proc.j.Write(EventProcessSpawned{
+	proc.j.Write(&EventProcessSpawned{
 		PID:  proc.proc.PID(),
 		File: proc.file,
 	})
@@ -137,7 +137,7 @@ func (proc *Process) startWaiting() {
 
 		// Write to the journal before signaling that the process is dead to
 		// ensure that the journal entry gets written.
-		proc.j.Write(ev)
+		proc.j.Write(&ev)
 
 		proc.dead <- struct{}{}
 	}()

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"git.unix.lgbt/diamondburned/cronmon/cronmon/internal/exec"
+	"git.unix.lgbt/diamondburned/cronmon/cronmon/exec"
 	"github.com/pkg/errors"
 )
 

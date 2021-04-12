@@ -15,19 +15,19 @@ type Watcher struct {
 	Events chan EventProcessListModify
 
 	w   *fsnotify.Watcher
-	j   writerJournaler
+	j   Journaler
 	dir string
 	ctx context.Context
 }
 
 // TryWatch attempts to watch the given directory asynchronously, but it will
 // log into the journaler if, for some reason, it fails to watch the directory.
-func TryWatch(ctx context.Context, dir string, j writerJournaler) *Watcher {
+func TryWatch(ctx context.Context, dir string, j Journaler) *Watcher {
 	w := newWatcher(ctx, dir, j)
 
 	go func() {
 		if err := w.init(); err != nil {
-			j.Write(EventWarning{
+			j.Write(&EventWarning{
 				Component: "watcher",
 				Error:     fmt.Sprintf("not watching dir because: %v", err),
 			})
@@ -42,7 +42,7 @@ func TryWatch(ctx context.Context, dir string, j writerJournaler) *Watcher {
 
 // Watch watches the given directory and logs events into the journaler.
 // The watcher is stopped once the given context is canceled.
-func NewWatcher(ctx context.Context, dir string, j writerJournaler) (*Watcher, error) {
+func NewWatcher(ctx context.Context, dir string, j Journaler) (*Watcher, error) {
 	w := newWatcher(ctx, dir, j)
 	if err := w.init(); err != nil {
 		return nil, err
@@ -52,7 +52,7 @@ func NewWatcher(ctx context.Context, dir string, j writerJournaler) (*Watcher, e
 	return w, nil
 }
 
-func newWatcher(ctx context.Context, dir string, j writerJournaler) *Watcher {
+func newWatcher(ctx context.Context, dir string, j Journaler) *Watcher {
 	return &Watcher{
 		Events: make(chan EventProcessListModify),
 		w:      nil,
@@ -85,7 +85,7 @@ func (w *Watcher) watch() {
 			return
 
 		case err := <-w.w.Errors:
-			w.j.Write(EventWarning{
+			w.j.Write(&EventWarning{
 				Component: "watcher",
 				Error:     "inotify error: " + err.Error(),
 			})
@@ -93,7 +93,7 @@ func (w *Watcher) watch() {
 		case evt := <-w.w.Events:
 			events := translateFsnotifyEvt(evt, w.dir)
 			if len(events) == 0 {
-				w.j.Write(EventWarning{
+				w.j.Write(&EventWarning{
 					Component: "watcher",
 					Error:     fmt.Sprintf("skipped unknown %s event at %q", evt.Op, evt.Name),
 				})
