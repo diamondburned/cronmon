@@ -3,6 +3,7 @@ module git.unix.lgbt/diamondburned/cronmon
 go 1.16
 
 require (
+	github.com/fsnotify/fsnotify v1.4.9 // indirect
 	github.com/gofrs/flock v0.8.0 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/pkg/errors v0.9.1

@@ -16,20 +16,29 @@ import (
 // 	s *bufio.Scanner
 // }
 
-// Logger is cronmon's event logger. It writes line-delimited JSON events.
-type Logger struct {
-	w io.Writer
+// Journaler describes an event logger.
+type Journaler interface {
+	Write(Event) error
 }
 
-// NewLogger create is a new event writer.
-func NewLogger(w io.Writer) *Logger {
-	return &Logger{w}
+type writerJournaler struct{ w io.Writer }
+
+// NewWriterJournaler creates a new journaler that writes line-delimited JSON
+// events into the writer.
+func NewWriterJournaler(w io.Writer) Journaler {
+	return &writerJournaler{w}
 }
 
 // Write writes the given event into the writer. Writes are concurrently safe
 // and are atomic.
-func (l *Logger) Write(ev Event) error {
-	evJSON := EventJSON{
+func (l *writerJournaler) Write(ev Event) error {
+	type eventJSON struct {
+		Time time.Time `json:"time"`
+		Type string    `json:"type"`
+		Data Event     `json:"data"`
+	}
+
+	evJSON := eventJSON{
 		Time: time.Now(),
 		Type: ev.Type(),
 		Data: ev,

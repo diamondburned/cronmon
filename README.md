@@ -48,6 +48,7 @@ for the processes that it would start.
 	  indication that it has stopped, then the process is looked up its parent
 	  PID to be compared with the one in the journal.
 	  	- If the PPID matches, then cronmon will try to terminate it.
+			- TODO: this doesn't work. Maybe check Executable().
 		- If the PPID does not match, then the process is considered dead.
 
 ## Cron File
