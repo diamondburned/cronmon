@@ -1,32 +1,30 @@
 package journal
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"time"
 
 	"git.unix.lgbt/diamondburned/cronmon/cronmon"
+	"git.unix.lgbt/diamondburned/cronmon/cronmon/journal/backwardio"
 	"github.com/pkg/errors"
 )
 
 // Reader implements a primitive reader that can parse journals written by
 // Writer from top to bottom.
 type Reader struct {
-	b *bufio.Reader
+	b *backwardio.BackwardsReader
 }
 
 // NewReader creates a new journal reader.
 func NewReader(r io.ReadSeeker) (*Reader, error) {
-
-	reader := io.LimitReader(r, o)
-	return &Reader{bufio.NewReader(reader)}, nil
+	return &Reader{backwardio.NewBackwardsReader(r)}, nil
 }
 
 // Read reads a single entry, starting from the top file.
 func (r *Reader) Read() (*Event, error) {
-	line, err := r.b.ReadSlice('\n')
+	line, err := r.b.ReadUntil('\n')
 	if err != nil {
 		return nil, err
 	}

@@ -32,8 +32,8 @@ func TestProcess(t *testing.T) {
 		}
 
 		j.Verify(t, true, []Event{
-			EventProcessSpawned{PID: 1, File: "sleep"},
-			EventProcessExited{PID: 1, File: "sleep", ExitCode: 0},
+			&EventProcessSpawned{PID: 1, File: "sleep"},
+			&EventProcessExited{PID: 1, File: "sleep", ExitCode: 0},
 		})
 	})
 
@@ -52,8 +52,8 @@ func TestProcess(t *testing.T) {
 		proc.Stop()
 
 		j.Verify(t, true, []Event{
-			EventProcessSpawned{PID: 1, File: "sleep"},
-			EventProcessExited{PID: 1, File: "sleep", ExitCode: -1},
+			&EventProcessSpawned{PID: 1, File: "sleep"},
+			&EventProcessExited{PID: 1, File: "sleep", ExitCode: -1},
 		})
 	})
 
@@ -85,10 +85,10 @@ func TestProcess(t *testing.T) {
 		}
 
 		j.Verify(t, false, []Event{
-			EventProcessSpawnError{File: "sleep", Reason: "before"},
-			EventProcessSpawnError{File: "sleep", Reason: "before"},
-			EventProcessSpawnError{File: "sleep", Reason: "before"},
-			EventProcessSpawnError{File: "sleep", Reason: "after"},
+			&EventProcessSpawnError{File: "sleep", Reason: "before"},
+			&EventProcessSpawnError{File: "sleep", Reason: "before"},
+			&EventProcessSpawnError{File: "sleep", Reason: "before"},
+			&EventProcessSpawnError{File: "sleep", Reason: "after"},
 		})
 	})
 
@@ -124,8 +124,8 @@ func TestProcess(t *testing.T) {
 		expect := make([]Event, 0, 10)
 		for i := 0; i < 5; i++ {
 			expect = append(expect,
-				EventProcessSpawned{PID: i + 1, File: "sleep"},
-				EventProcessExited{PID: i + 1, File: "sleep", ExitCode: 0},
+				&EventProcessSpawned{PID: i + 1, File: "sleep"},
+				&EventProcessExited{PID: i + 1, File: "sleep", ExitCode: 0},
 			)
 		}
 
