@@ -22,14 +22,20 @@ type Event struct {
 
 // Writer is a simple journaler that writes line-delimited JSON events into the
 // writer.
-type Writer struct{ w io.Writer }
+type Writer struct {
+	id string
+	w  io.Writer
+}
 
 var _ cronmon.Journaler = (*Writer)(nil)
 
 // NewWriter creates a new journal writer.
-func NewWriter(w io.Writer) Writer {
-	return Writer{w}
+func NewWriter(id string, w io.Writer) Writer {
+	return Writer{id, w}
 }
+
+// ID returns the ID of the writer.
+func (l Writer) ID() string { return l.id }
 
 // Write writes the given event into the writer. Writes are concurrently safe
 // and are atomic.
@@ -61,6 +67,11 @@ func (l Writer) Write(ev cronmon.Event) error {
 // FileLockJournaler is a journaler that uses a file lock (flock) to lock the
 // given file and writes to it. The FileLockJournaler instance must be closed by
 // the caller or by the operating system when the application exits.
+//
+// ID
+//
+// A FileLockJournaler creates the journaler ID by md5-hashing the path of the
+// journal file, which is then encoded using base64's RawStdEncoding.
 //
 // Reading the Journal
 //
@@ -114,7 +125,7 @@ func newFileLockJournaler(ctx context.Context, path string) (*FileLockJournaler,
 	}
 
 	return &FileLockJournaler{
-		Writer: Writer{f},
+		Writer: Writer{"file:" + path, f},
 		f:      f,
 		l:      l,
 	}, nil

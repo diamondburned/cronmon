@@ -1,9 +1,11 @@
 package cronmon
 
 import (
+	"io"
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 )
 
 // mockJournal is an in-memory storage of journals, primarily used for testing.
@@ -15,6 +17,8 @@ type mockJournal struct {
 }
 
 var _ Journaler = (*mockJournal)(nil)
+
+func (m *mockJournal) ID() string { return "mock" }
 
 // Finalize locks the memory store. Future writes will cause a panic.
 func (m *mockJournal) Finalize() {
@@ -69,4 +73,60 @@ func (m *mockJournal) Verify(t *testing.T, strict bool, journals []Event) []Even
 
 	m.journals = m.journals[len(journals):]
 	return m.journals
+}
+
+func TestReadPreviousState(t *testing.T) {
+	events := []Event{
+		&EventProcessSpawned{PID: 2, File: "a"},
+		&EventProcessExited{PID: 2, File: "a"},
+		&EventProcessExited{PID: 3, File: "b"},
+		&EventProcessSpawned{PID: 2, File: "a"},
+		&EventProcessSpawned{PID: 3, File: "b"},
+		&EventAcquired{},
+	}
+
+	d := time.Date(2020, 04, 01, 00, 00, 00, 00, time.UTC)
+	r := mockReader{
+		events: make([]mockEvent, len(events)),
+	}
+	for i, ev := range events {
+		r.events[i] = mockEvent{e: ev, t: d}
+	}
+
+	state, err := ReadPreviousState(&r)
+	if err != nil {
+		t.Fatal("unexpected error:", err)
+	}
+
+	expect := &PreviousState{
+		StartedAt: d,
+		Processes: map[string]int{"a": 2},
+	}
+
+	if !reflect.DeepEqual(state, expect) {
+		t.Fatalf("unexpected state returned:\n"+
+			"got      %#v\n"+
+			"expected %#v", state, expect)
+	}
+}
+
+type mockReader struct {
+	events []mockEvent
+	cursor int
+}
+
+type mockEvent struct {
+	e Event
+	t time.Time
+}
+
+func (r *mockReader) Read() (Event, time.Time, error) {
+	if r.cursor >= len(r.events) {
+		return nil, time.Time{}, io.EOF
+	}
+
+	ev := r.events[r.cursor]
+	r.cursor++
+
+	return ev.e, ev.t, nil
 }

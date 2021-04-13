@@ -57,9 +57,7 @@ func (ev *EventWarning) event()       {}
 
 // EventAcquired is emitted when the flock (i.e. write lock on the journal) is
 // acquired, which is on startup.
-type EventAcquired struct {
-	PPID int `json:"ppid"`
-}
+type EventAcquired struct{}
 
 func (ev *EventAcquired) Type() string { return eventAcquired }
 func (ev *EventAcquired) event()       {}
