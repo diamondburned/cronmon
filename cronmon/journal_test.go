@@ -6,54 +6,67 @@ import (
 	"testing"
 )
 
-type mockJournaler struct {
+// mockJournal is an in-memory storage of journals, primarily used for testing.
+// A zero-value instance is a valid instance.
+type mockJournal struct {
 	mutex    sync.Mutex
 	finalize bool
 	journals []Event
 }
 
-var _ Journaler = (*mockJournaler)(nil)
+var _ Journaler = (*mockJournal)(nil)
 
-func (j *mockJournaler) Write(ev Event) error {
-	j.mutex.Lock()
-	defer j.mutex.Unlock()
+// Finalize locks the memory store. Future writes will cause a panic.
+func (m *mockJournal) Finalize() {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
-	if j.finalize {
+	m.finalize = true
+}
+
+// Write appends a journal event into the internal store.
+func (m *mockJournal) Write(ev Event) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	if m.finalize {
 		panic("log write when finalized")
 	}
 
-	j.journals = append(j.journals, ev)
+	m.journals = append(m.journals, ev)
 	return nil
 }
 
-func (j *mockJournaler) Finalize() []Event {
-	j.mutex.Lock()
-	defer j.mutex.Unlock()
+// Journals returns the journal slice.
+func (m *mockJournal) Journals() []Event {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
-	j.finalize = true
-
-	return j.journals
+	return m.journals
 }
 
-func (j *mockJournaler) Verify(t *testing.T, strict bool, journals []Event) []Event {
+// Verify verifies that the given journals slice is equal to the one stored
+// internally. If strict is true, then a length check is performed, otherwise,
+// the unmatched events are returned.
+//
+// Consecutive calls to Verify will match the remaining unmatched events.
+func (m *mockJournal) Verify(t *testing.T, strict bool, journals []Event) []Event {
 	t.Helper()
 
-	j.mutex.Lock()
-	defer j.mutex.Unlock()
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
 
-	j.finalize = true
-
-	if strict && len(journals) != len(j.journals) {
-		t.Errorf("mismatch journal length, got %d, expected %d", len(j.journals), len(journals))
+	if strict && len(journals) != len(m.journals) {
+		t.Errorf("mismatch journal length, got %d, expected %d", len(m.journals), len(journals))
 		return nil
 	}
 
 	for i, ev := range journals {
-		if !reflect.DeepEqual(j.journals[i], ev) {
-			t.Errorf("journal %d mismatch, got %#v, expected %#v", i, j.journals[i], ev)
+		if !reflect.DeepEqual(m.journals[i], ev) {
+			t.Errorf("journal %d mismatch, got %#v, expected %#v", i, m.journals[i], ev)
 		}
 	}
 
-	j.journals = j.journals[len(journals):]
-	return j.journals
+	m.journals = m.journals[len(journals):]
+	return m.journals
 }

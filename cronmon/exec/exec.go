@@ -1,3 +1,5 @@
+// Package exec provides an abstraction around package os' Process
+// implementation for easier testing.
 package exec
 
 import (
@@ -37,7 +39,15 @@ func FindProcess(pid int) (Process, error) {
 
 // StartProcess creates a new command process on the system.
 func StartProcess(argv []string) (Process, error) {
-	p, err := os.StartProcess(argv[0], argv, &os.ProcAttr{})
+	return StartProcessWithFiles(argv, nil)
+}
+
+// StartProcessWithFiles creates a new command process on the system with the
+// given list of file descriptors.
+func StartProcessWithFiles(argv []string, files []*os.File) (Process, error) {
+	p, err := os.StartProcess(argv[0], argv, &os.ProcAttr{
+		Files: files,
+	})
 	if err != nil {
 		return nil, err
 	}

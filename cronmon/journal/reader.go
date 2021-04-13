@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"git.unix.lgbt/diamondburned/cronmon/cronmon"
@@ -18,11 +19,12 @@ type Reader struct {
 }
 
 // NewReader creates a new journal reader.
-func NewReader(r io.ReadSeeker) (*Reader, error) {
-	return &Reader{backwardio.NewBackwardsReader(r)}, nil
+func NewReader(r io.ReadSeeker) *Reader {
+	return &Reader{backwardio.NewBackwardsReader(r)}
 }
 
-// Read reads a single entry, starting from the top file.
+// Read reads a single entry, starting from the top file. An EOF error is
+// returned if the file has been fully consumed.
 func (r *Reader) Read() (*Event, error) {
 	line, err := r.b.ReadUntil('\n')
 	if err != nil {
@@ -53,4 +55,48 @@ func (r *Reader) Read() (*Event, error) {
 		Type: rawEvent.Type,
 		Data: event,
 	}, nil
+}
+
+// PreviousState parses the last cronmon's previous state.
+type PreviousState struct {
+	PPID      int
+	StartedAt time.Time
+}
+
+// ReadPreviousStateFromFile reads the PreviousState from the given file path.
+func ReadPreviousStateFromFile(path string) (*PreviousState, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	return ReadPreviousState(f)
+}
+
+// ReadPreviousState reads backwards the given reader to return the
+// PreviousState.
+func ReadPreviousState(r io.ReadSeeker) (*PreviousState, error) {
+	reader := NewReader(r)
+	state := PreviousState{
+		PPID: -1,
+	}
+
+	for {
+		event, err := reader.Read()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil, io.ErrUnexpectedEOF
+			}
+
+			return nil, err
+		}
+
+		switch data := event.Data.(type) {
+		case *cronmon.EventAcquired:
+			state.PPID = data.PPID
+			state.StartedAt = event.Time
+			return &state, nil
+		}
+	}
 }

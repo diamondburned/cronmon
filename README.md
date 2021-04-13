@@ -40,16 +40,11 @@ performed. This is critical to allow cronmon to restore itself: on the event of
 a failure, cronmon will try to take over the PIDs recorded in the transaction
 for all known files and pick up the job.
 
-On start, cronmon will attempt to scan backwards the journal to find the status
-for the processes that it would start.
-	- If the process is not found or is found to have been stopped, then it will
-	  be started.
-	- If the only entry indicates that the process is already running with no
-	  indication that it has stopped, then the process is looked up its parent
-	  PID to be compared with the one in the journal.
-	  	- If the PPID matches, then cronmon will try to terminate it.
-			- TODO: this doesn't work. Maybe check Executable().
-		- If the PPID does not match, then the process is considered dead.
+On start, cronmon will attempt to detect PID files that have been preemptively unlinked before they are passed to the application. According to [this StackOverflow][delete file on close] article, a file is reference-counted, so while the file is opened, it can be `unlink`ed, which won't delete it right away until the file descriptor is closed. We can hand this file descriptor off to the program, so when the program dies, the file will be deleted, signaling that it is dead.
+
+This behavior probably breaks on non-Unixes like Windows.
+
+[delete file on close]: https://stackoverflow.com/questions/3181641/how-can-i-delete-a-file-upon-its-close-in-c-on-linux
 
 ## Cron File
 

@@ -4,13 +4,14 @@ package cronmon
 type eventType = string
 
 const (
-	eventWarning           eventType = "warning"
-	eventAcquired          eventType = "acquired lock"
-	eventLogTruncated      eventType = "log truncated"
-	eventProcessSpawnError eventType = "process spawn error"
-	eventProcessSpawned    eventType = "process spawned"
-	eventProcessExited     eventType = "process exited"
-	eventProcessListModify eventType = "process list modified"
+	eventWarning              eventType = "warning"
+	eventAcquired             eventType = "acquired lock"
+	eventLogTruncated         eventType = "log truncated"
+	eventProcessTakeoverError eventType = "process takeover error"
+	eventProcessSpawnError    eventType = "process spawn error"
+	eventProcessSpawned       eventType = "process spawned"
+	eventProcessExited        eventType = "process exited"
+	eventProcessListModify    eventType = "process list modified"
 )
 
 // Event is an interface describing known events.
@@ -30,6 +31,8 @@ func NewEvent(eventType string) Event {
 		return &EventAcquired{}
 	case eventLogTruncated:
 		return &EventLogTruncated{}
+	case eventProcessTakeoverError:
+		return &EventProcessTakeoverError{}
 	case eventProcessSpawnError:
 		return &EventProcessSpawnError{}
 	case eventProcessSpawned:
@@ -55,7 +58,6 @@ func (ev *EventWarning) event()       {}
 // EventAcquired is emitted when the flock (i.e. write lock on the journal) is
 // acquired, which is on startup.
 type EventAcquired struct {
-	// PPID is cronmon's process ID.
 	PPID int `json:"ppid"`
 }
 
@@ -71,6 +73,18 @@ type EventLogTruncated struct {
 func (ev *EventLogTruncated) Type() string { return eventLogTruncated }
 func (ev *EventLogTruncated) event()       {}
 
+// EventProcessTakeoverError is emitted when a process fails to be taken over,
+// usually because it's already dead.
+type EventProcessTakeoverError struct {
+	PID        int    `json:"pid"`
+	File       string `json:"file"`
+	Error      string `json:"error"`
+	StatusFile string `json:"status_file"`
+}
+
+func (ev *EventProcessTakeoverError) Type() string { return eventProcessTakeoverError }
+func (ev *EventProcessTakeoverError) event()       {}
+
 // EventProcessSpawnError is emitted when a process fails to start for any
 // reason.
 type EventProcessSpawnError struct {
@@ -84,8 +98,8 @@ func (ev *EventProcessSpawnError) event()       {}
 // EventProcessSpawned is emitted when a process has been started for any
 // reason.
 type EventProcessSpawned struct {
-	PID  int    `json:"pid"`
 	File string `json:"file"`
+	PID  int    `json:"pid"`
 }
 
 func (ev *EventProcessSpawned) Type() string { return eventProcessSpawned }

@@ -17,13 +17,12 @@ type Watcher struct {
 	w   *fsnotify.Watcher
 	j   Journaler
 	dir string
-	ctx context.Context
 }
 
 // TryWatch attempts to watch the given directory asynchronously, but it will
 // log into the journaler if, for some reason, it fails to watch the directory.
 func TryWatch(ctx context.Context, dir string, j Journaler) *Watcher {
-	w := newWatcher(ctx, dir, j)
+	w := newWatcher(dir, j)
 
 	go func() {
 		if err := w.init(); err != nil {
@@ -34,7 +33,7 @@ func TryWatch(ctx context.Context, dir string, j Journaler) *Watcher {
 			return
 		}
 
-		w.watch()
+		w.watch(ctx)
 	}()
 
 	return w
@@ -43,22 +42,21 @@ func TryWatch(ctx context.Context, dir string, j Journaler) *Watcher {
 // Watch watches the given directory and logs events into the journaler.
 // The watcher is stopped once the given context is canceled.
 func NewWatcher(ctx context.Context, dir string, j Journaler) (*Watcher, error) {
-	w := newWatcher(ctx, dir, j)
+	w := newWatcher(dir, j)
 	if err := w.init(); err != nil {
 		return nil, err
 	}
 
-	go w.watch()
+	go w.watch(ctx)
 	return w, nil
 }
 
-func newWatcher(ctx context.Context, dir string, j Journaler) *Watcher {
+func newWatcher(dir string, j Journaler) *Watcher {
 	return &Watcher{
 		Events: make(chan EventProcessListModify),
 		w:      nil,
 		j:      j,
 		dir:    dir,
-		ctx:    ctx,
 	}
 }
 
@@ -76,12 +74,12 @@ func (w *Watcher) init() error {
 	return nil
 }
 
-func (w *Watcher) watch() {
+func (w *Watcher) watch(ctx context.Context) {
 	defer w.w.Close()
 
 	for {
 		select {
-		case <-w.ctx.Done():
+		case <-ctx.Done():
 			return
 
 		case err := <-w.w.Errors:
@@ -105,7 +103,7 @@ func (w *Watcher) watch() {
 				select {
 				case w.Events <- event:
 					continue
-				case <-w.ctx.Done():
+				case <-ctx.Done():
 					return
 				}
 			}

@@ -2,8 +2,10 @@ package cronmon
 
 import (
 	"context"
+	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"git.unix.lgbt/diamondburned/cronmon/cronmon/exec"
@@ -34,12 +36,15 @@ type Process struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	file      string
-	startProc func() (exec.Process, error)
+	file string
+	arg0 string
 
 	evCh chan func()
 	dead chan struct{}
 	done chan error
+
+	startProc func() (exec.Process, error)
+	statusDir bool
 
 	// states
 	proc exec.Process
@@ -50,7 +55,7 @@ type Process struct {
 // is canceled to wait for the background routine to exit.
 func NewProcess(ctx context.Context, dir, file string, j Journaler) *Process {
 	ctx, cancel := context.WithCancel(ctx)
-	argv := []string{filepath.Join(dir, file)}
+	arg0 := filepath.Join(dir, file)
 
 	proc := &Process{
 		WaitTimeout:  ProcessWaitTimeout,
@@ -61,34 +66,120 @@ func NewProcess(ctx context.Context, dir, file string, j Journaler) *Process {
 
 		j:    j,
 		file: file,
+		arg0: arg0,
 		evCh: make(chan func()),
 		dead: make(chan struct{}, 1),
 		done: make(chan error, 1),
 
+		statusDir: true,
 		startProc: func() (exec.Process, error) {
-			return exec.StartProcess(argv)
+			return exec.StartProcess([]string{arg0})
 		},
 	}
+
+	proc.startProc = proc.startProcess
 
 	go proc.startMonitor()
 
 	return proc
 }
 
-// Takeover attempts to takeover the given PID instead of starting a new
-// process. If Process sees that the PID matches with its info, then it'll work
-// similarly to Start. An error is returned if the process does not match.
-func (proc *Process) Takeover(pid int) {
-	proc.evCh <- func() { proc.takeover(pid) }
+// Takeover takes over this process with the given PID if it was previously
+// owned by the given PPID. The PPID should belong to a previous cronmon
+// instance. If the process fails to be taken over, then it is started normally.
+func (proc *Process) Takeover(ppid int) {
+	proc.evCh <- func() { proc.takeover(ppid) }
 }
 
-func (proc *Process) takeover(pid int) {
-	panic("Implement me")
+func (proc *Process) takeover(ppid int) {
+	statusFile := ppidPath(proc.file)
+
+	b, err := ioutil.ReadFile(statusFile)
+	if err != nil {
+		proc.dead <- struct{}{}
+
+		proc.j.Write(&EventProcessSpawnError{
+			File:   proc.file,
+			Reason: "status file " + statusFile + "not found",
+		})
+		return
+	}
+
+	pid, err := strconv.Atoi(string(b))
+	if err != nil {
+		proc.dead <- struct{}{}
+
+		proc.j.Write(&EventProcessSpawnError{
+			File:   proc.file,
+			Reason: "invalid PID file: " + err.Error(),
+		})
+		return
+	}
+
+	p, err := exec.FindProcess(pid)
+	if err != nil {
+		// An error would never occur here on Linux. The error would go straight
+		// into Wait, probably.
+		proc.dead <- struct{}{}
+
+		proc.j.Write(&EventWarning{
+			Component: "process",
+			Error:     "FindProcess error: " + err.Error(),
+		})
+		return
+	}
+
+	proc.proc = p
+	proc.startWaiting(false)
 }
 
 // Start starts a new process.
 func (proc *Process) Start() {
 	proc.evCh <- proc.start
+}
+
+func (proc *Process) startProcess() (exec.Process, error) {
+	// Create the PID file if we have the status directory.
+	path := ppidPath(proc.file)
+
+	// Only allow the child process to read from the file.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0700)
+	if err != nil {
+		// This error isn't fatal, so we only warn.
+		proc.j.Write(&EventWarning{
+			Component: "process",
+			Error:     "failed to make status file at " + path,
+		})
+
+		return exec.StartProcess([]string{proc.arg0})
+	}
+
+	// Spawn the process; skip the first 3 file descriptors, as they're
+	// stdin, stdout and stderr.
+	p, err := exec.StartProcessWithFiles([]string{proc.arg0}, []*os.File{nil, nil, nil, f})
+	if err != nil {
+		f.Close()
+		os.Remove(path)
+		return nil, err
+	}
+
+	if err := ioutil.WriteFile(path, []byte(strconv.Itoa(p.PID())), 0700); err != nil {
+		// This error isn't fatal, so we only warn.
+		proc.j.Write(&EventWarning{
+			Component: "process",
+			Error:     "failed to write PID: " + err.Error(),
+		})
+	}
+
+	// There's not much we can do if Remove fails.
+	if err := os.Remove(path); err != nil {
+		proc.j.Write(&EventWarning{
+			Component: "process",
+			Error:     "failed to remove status file: " + err.Error(),
+		})
+	}
+
+	return p, nil
 }
 
 func (proc *Process) start() {
@@ -106,11 +197,11 @@ func (proc *Process) start() {
 	}
 
 	proc.proc = p
-	proc.startWaiting()
+	proc.startWaiting(true)
 }
 
 // startWaiting reports the PID to the journal and starts a waiting routine.
-func (proc *Process) startWaiting() {
+func (proc *Process) startWaiting(createStatus bool) {
 	// !!!: A critical failure might occur while this section is being executed:
 	// if the PID is not written into the journal in time, then the new cronmon
 	// process won't be aware of the running process. There's not really a way
