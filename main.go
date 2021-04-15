@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -15,6 +14,7 @@ import (
 
 	"git.unix.lgbt/diamondburned/cronmon/cronmon"
 	"git.unix.lgbt/diamondburned/cronmon/cronmon/journal"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -59,13 +59,18 @@ func init() {
 }
 
 func main() {
+	var err error
 	switch flag.Arg(0) {
 	case "cron":
 		cron()
 	case "":
-		start()
+		err = start()
 	default:
 		log.Fatalf("unknown subcommand %q\n", flag.Arg(0))
+	}
+
+	if err != nil {
+		log.Fatalln(err)
 	}
 }
 
@@ -90,16 +95,16 @@ func cron() {
 	}
 }
 
-func start() {
+func start() error {
 	j, err := journal.NewFileLockJournaler(journalFile)
 	if err != nil {
 		if errors.Is(err, journal.ErrLockedElsewhere) {
 			// Non-fatal error.
 			log.Println("cronmon is already running")
-			return
+			return nil
 		}
 
-		log.Fatalln("failed to acquire journal lock:", err)
+		return errors.Wrap(err, "failed to acquire journal lock")
 	}
 	defer j.Close()
 
@@ -108,13 +113,14 @@ func start() {
 
 	// Beware: changing the combination of these writers will break existing
 	// status directories.
-	journaler := journal.MultiWriter(j, journal.NewHumanWriter("stdout", os.Stdout))
+	journaler := journal.MultiWriter(j, journal.NewHumanWriter("stderr", os.Stderr))
 
 	m, err := cronmon.NewMonitor(ctx, scriptsDir, journaler)
 	if err != nil {
-		log.Fatalln("failed to restore monitor:", err)
+		return errors.Wrap(err, "failed to create monitor")
 	}
 	defer m.Stop()
 
 	<-ctx.Done()
+	return nil
 }
