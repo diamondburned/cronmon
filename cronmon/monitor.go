@@ -166,7 +166,7 @@ func (m *Monitor) removeFile(file string) {
 	}
 
 	m.j.Write(&EventWarning{
-		Component: "cronmon",
-		Error:     "attempted to remove non-existent process file " + file,
+		Component: "monitor",
+		Error:     "attempted to stop non-existent process " + file,
 	})
 }
