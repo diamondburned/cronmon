@@ -3,6 +3,7 @@ package cronmon
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/fsnotify/fsnotify"
@@ -89,23 +90,21 @@ func (w *Watcher) watch(ctx context.Context) {
 			})
 
 		case evt := <-w.w.Events:
-			events := translateFsnotifyEvt(evt, w.dir)
-			if len(events) == 0 {
+			event := translateFsnotifyEvt(evt, w.dir)
+			if event.Op == "" {
 				w.j.Write(&EventWarning{
 					Component: "watcher",
-					Error:     fmt.Sprintf("skipped unknown %s event at %q", evt.Op, evt.Name),
+					Error:     fmt.Sprintf("skipped unknown %s event at %s", evt.Op, evt.Name),
 				})
 
 				continue
 			}
 
-			for _, event := range events {
-				select {
-				case w.Events <- event:
-					continue
-				case <-ctx.Done():
-					return
-				}
+			select {
+			case w.Events <- event:
+				continue
+			case <-ctx.Done():
+				return
 			}
 		}
 	}
@@ -113,21 +112,21 @@ func (w *Watcher) watch(ctx context.Context) {
 
 // translateFsnotifyEvt translates an fsnotify event into a list of
 // EventProcessListModify events.
-func translateFsnotifyEvt(evt fsnotify.Event, dir string) []EventProcessListModify {
-	evDir, name := filepath.Split(dir)
-	if evDir != dir {
-		return nil
+func translateFsnotifyEvt(evt fsnotify.Event, dir string) EventProcessListModify {
+	evDir, name := filepath.Split(evt.Name)
+	// Clean the trailing slash off of evDir.
+	if filepath.Clean(evDir) != dir {
+		return EventProcessListModify{}
 	}
 
+	var op ProcessListModifyOp
+
 	switch {
-	case evt.Op&fsnotify.Write != 0:
-		return []EventProcessListModify{
-			{Op: ProcessListUpdate, File: name},
-		}
 	case evt.Op&fsnotify.Create != 0:
-		return []EventProcessListModify{
-			{Op: ProcessListAdd, File: name},
-		}
+		op = ProcessListAdd
+	case evt.Op&fsnotify.Write != 0:
+		op = ProcessListUpdate
+
 	case evt.Op&fsnotify.Rename != 0:
 		// Treat a rename as a remove; fsnotify does not report renames
 		// properly, so it's apparently treated like a remove.
@@ -135,10 +134,25 @@ func translateFsnotifyEvt(evt fsnotify.Event, dir string) []EventProcessListModi
 
 		fallthrough
 	case evt.Op&fsnotify.Remove != 0:
-		return []EventProcessListModify{
-			{Op: ProcessListRemove, File: name},
+		op = ProcessListRemove
+
+	case evt.Op&fsnotify.Chmod != 0:
+		// Determine if the application is now executable or not.
+		s, err := os.Stat(evt.Name)
+		if err != nil {
+			return EventProcessListModify{}
+		}
+
+		if s.Mode().Perm()&0111 != 0 {
+			op = ProcessListAdd
+		} else {
+			op = ProcessListRemove
 		}
 	}
 
-	return nil
+	if op == "" {
+		return EventProcessListModify{}
+	}
+
+	return EventProcessListModify{Op: op, File: name}
 }

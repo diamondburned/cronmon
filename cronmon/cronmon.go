@@ -4,53 +4,44 @@
 //
 // Mechanism of Operation
 //
+// Cronmon works similarly to your average service manager: it manages a group
+// of programs to make sure they're alive; however, there are some differences
+// that will be outlined below.
+//
+// Service Files
+//
+// In cronmon, a service file is an executable. Cronmon watches for executable
+// files in the "scripts" directory, which is by default
+// "$XDG_CONFIG_HOME/cronmon/scripts/". The directory is actively watched for
+// changes, and service restarts will be performed accordingly.
+//
+// Note that when a regular editor writes to one of the scripts, it may perform
+// multiple operations for atomicity, which may interfere and cause cronmon to
+// restart the process multiple times rapidly. This is to be expected.
+//
+// Interruption
+//
+// When cronmon is suddenly (ungracefully) interrupted, its Pdeathsig mechanism
+// will take down its managed processes as well, meaning that when cronmon is
+// restored, there won't be the same processes running twice. Although this may
+// not be a very ideal and portable solution, it is the simplest one.
+//
+// When a subprocess is disowned from the processes that cronmon has spawned,
+// its parent process will be cronmon itself, not init (PID 1). This is
+// accomplished using the non-portable SET_CHILD_SUBREAPER feature. This
+// disowned process won't be killed when the process stops, but it will be
+// killed when cronmon is interrupted.
+//
 // Journal Files
 //
-// In order to save the state of operation between cronmon restarts, cronmon
-// logs its actions into a journal file. This journal file is read on every
-// start to restore the previous state. Each cronmon process may take exclusive
-// ownership on one journal file.
+// During its operation, cronmon logs its actions into a journal file. Each
+// cronmon process may take exclusive ownership of each journal file. The
+// purpose of this journal file is to allow cronmon access to previous state
+// while also providing a human and machine readable log format. The default
+// path for the log file is "$XDG_CONFIG_HOME/cronmon/journal.json".
 //
 // Journal events are described in events.go, where each event is prefixed with
 // "Event" and comes with a Type() method to aid writing these events down in
 // any format. An implementation exists in package journal to read and write
 // journals in the line-delimited JSON format.
-//
-// PID Files
-//
-// In order to ensure that cronmon knows whether or not a process is still alive
-// even when it's dead, it relies on the Unix assumption that files are
-// referenced counted.
-//
-// Take for example, that a file is created, opened, and then unlinked
-// immediately without being closed. By creating and opening the file, the
-// reference count will be 1, and unlinking it won't immediately delete the
-// file. However, when closed, the reference count will drop to 0, and the file
-// will be deleted.
-//
-// If the same file were to be given to a process, it will be kept open until
-// the process explicitly closes it or exits. When this happens, the file will
-// be gone, and cronmon will know that the process is dead if it can't find the
-// file when it's back up. Vice versa, cronmon will know that the process is
-// still alive if the file is still there, and it will take over the process to
-// monitor it further.
-//
-// As for the implementation details, a "status directory" is made to contain
-// "status files." This directory would be whatever os.TempDir() returns, joined
-// with "cronmon" and the ID of the journaler. Inside it will contain empty
-// files with the name of each children process being the filename.
-//
-// Multiple Monitor instances within the same process may share the same status
-// directory.
-//
-// The status directory tree may look like this in some systems:
-//
-//    - /
-//        - tmp/
-//            - cronmon/
-//                - file-WmcPPuLyMkNgOJM4HEacUQ/
-//                    - process1
-//                    - script2
-//                    - thing3.sh
-//
 package cronmon

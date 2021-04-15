@@ -4,14 +4,14 @@ package cronmon
 type eventType = string
 
 const (
-	eventWarning              eventType = "warning"
-	eventAcquired             eventType = "acquired lock"
-	eventLogTruncated         eventType = "log truncated"
-	eventProcessTakeoverError eventType = "process takeover error"
-	eventProcessSpawnError    eventType = "process spawn error"
-	eventProcessSpawned       eventType = "process spawned"
-	eventProcessExited        eventType = "process exited"
-	eventProcessListModify    eventType = "process list modified"
+	eventWarning           eventType = "warning"
+	eventAcquired          eventType = "acquired lock"
+	eventQuit              eventType = "monitor quit"
+	eventLogTruncated      eventType = "log truncated"
+	eventProcessSpawnError eventType = "process spawn error"
+	eventProcessSpawned    eventType = "process spawned"
+	eventProcessExited     eventType = "process exited"
+	eventProcessListModify eventType = "process list modified"
 )
 
 // Event is an interface describing known events.
@@ -31,8 +31,6 @@ func NewEvent(eventType string) Event {
 		return &EventAcquired{}
 	case eventLogTruncated:
 		return &EventLogTruncated{}
-	case eventProcessTakeoverError:
-		return &EventProcessTakeoverError{}
 	case eventProcessSpawnError:
 		return &EventProcessSpawnError{}
 	case eventProcessSpawned:
@@ -55,12 +53,20 @@ type EventWarning struct {
 func (ev *EventWarning) Type() string { return eventWarning }
 func (ev *EventWarning) event()       {}
 
-// EventAcquired is emitted when the flock (i.e. write lock on the journal) is
-// acquired, which is on startup.
-type EventAcquired struct{}
+// EventAcquired is emitted when the monitor is started.
+type EventAcquired struct {
+	JournalID string `json:"journal_id"`
+}
 
 func (ev *EventAcquired) Type() string { return eventAcquired }
 func (ev *EventAcquired) event()       {}
+
+// EventQuit is emitted when the monitor has quit and all its processes have
+// been stopped.
+type EventQuit struct{}
+
+func (ev *EventQuit) Type() string { return eventQuit }
+func (ev *EventQuit) event()       {}
 
 // EventLogTruncated is emitted when the log file has been truncated for any
 // reason, including a corrupted log file.
@@ -70,18 +76,6 @@ type EventLogTruncated struct {
 
 func (ev *EventLogTruncated) Type() string { return eventLogTruncated }
 func (ev *EventLogTruncated) event()       {}
-
-// EventProcessTakeoverError is emitted when a process fails to be taken over,
-// usually because it's already dead.
-type EventProcessTakeoverError struct {
-	PID        int    `json:"pid"`
-	File       string `json:"file"`
-	Error      string `json:"error"`
-	StatusFile string `json:"status_file"`
-}
-
-func (ev *EventProcessTakeoverError) Type() string { return eventProcessTakeoverError }
-func (ev *EventProcessTakeoverError) event()       {}
 
 // EventProcessSpawnError is emitted when a process fails to start for any
 // reason.
@@ -105,8 +99,8 @@ func (ev *EventProcessSpawned) event()       {}
 
 // EventProcessExited is emitted when a process has been stopped for any reason.
 type EventProcessExited struct {
-	PID      int    `json:"pid"`
 	File     string `json:"file"`
+	PID      int    `json:"pid"`
 	Error    string `json:"error,omitempty"`
 	ExitCode int    `json:"exit_code"` // -1 if interrupted or terminated
 }

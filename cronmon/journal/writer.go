@@ -1,15 +1,12 @@
 package journal
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"io"
-	"os"
+	"log"
 	"time"
 
 	"git.unix.lgbt/diamondburned/cronmon/cronmon"
-	"github.com/gofrs/flock"
 	"github.com/pkg/errors"
 )
 
@@ -23,116 +20,66 @@ type Event struct {
 // Writer is a simple journaler that writes line-delimited JSON events into the
 // writer.
 type Writer struct {
+	e  *json.Encoder
 	id string
-	w  io.Writer
 }
 
 var _ cronmon.Journaler = (*Writer)(nil)
 
 // NewWriter creates a new journal writer.
-func NewWriter(id string, w io.Writer) Writer {
-	return Writer{id, w}
+func NewWriter(id string, w io.Writer) *Writer {
+	return &Writer{json.NewEncoder(w), id}
 }
 
 // ID returns the ID of the writer.
-func (l Writer) ID() string { return l.id }
+func (w *Writer) ID() string { return w.id }
 
 // Write writes the given event into the writer. Writes are concurrently safe
 // and are atomic.
-func (l Writer) Write(ev cronmon.Event) error {
+func (w *Writer) Write(ev cronmon.Event) error {
 	evJSON := Event{
 		Time: time.Now(),
 		Type: ev.Type(),
 		Data: ev,
 	}
 
-	buf := bytes.Buffer{}
-	buf.Grow(512)
-
-	if err := json.NewEncoder(&buf).Encode(evJSON); err != nil {
+	// Encode's implementation both does the write in one go and append a new
+	// line after each call.
+	if err := w.e.Encode(evJSON); err != nil {
 		return errors.Wrap(err, "failed to marshal event")
-	}
-
-	// Append a new line.
-	buf.WriteByte('\n')
-
-	_, err := l.w.Write(buf.Bytes())
-	if err != nil {
-		return errors.Wrap(err, "failed to write event")
 	}
 
 	return nil
 }
 
-// FileLockJournaler is a journaler that uses a file lock (flock) to lock the
-// given file and writes to it. The FileLockJournaler instance must be closed by
-// the caller or by the operating system when the application exits.
-//
-// ID
-//
-// A FileLockJournaler creates the journaler ID by md5-hashing the path of the
-// journal file, which is then encoded using base64's RawStdEncoding.
-//
-// Reading the Journal
-//
-// The caller does not need to acquire a file lock in order to read the written
-// journal, as each Write operation performed on the file is guaranteed to
-// always be valid and atomic.
-//
-// To read the log, simply use Reader, which is implemented with a line reader
-// and a known index to point to the last known length of the file.
-type FileLockJournaler struct {
-	Writer
-	f *os.File
-	l *flock.Flock
+// HumanWriter writes the journal in a human-friendly format. The format cannot
+// be parsed; use a regular Writer for this.
+type HumanWriter struct {
+	log *log.Logger
+	id  string
 }
 
-// NewFileLockJournaler creates a new file journaler if it can acquire a flock
-// on the path. It returns an error if it fails to acquire the lock.
-func NewFileLockJournaler(path string) (*FileLockJournaler, error) {
-	return newFileLockJournaler(nil, path)
+// NewHumanWriter creates a new HumanWriter that writes to the given writer.
+func NewHumanWriter(id string, w io.Writer) *HumanWriter {
+	logger := log.New(w, "journal: ", log.Ldate|log.Lmicroseconds|log.Lmsgprefix)
+	return &HumanWriter{logger, id}
 }
 
-// NewFileLockJournalerWait creates a new file journaler but waits until the
-// lock can be acquired or until the context times out.
-func NewFileLockJournalerWait(ctx context.Context, path string) (*FileLockJournaler, error) {
-	return newFileLockJournaler(ctx, path)
+// WrapHumanWriter wraps the given logger to return a HumanWriter.
+func WrapHumanWriter(id string, logger *log.Logger) *HumanWriter {
+	return &HumanWriter{logger, id}
 }
 
-func newFileLockJournaler(ctx context.Context, path string) (*FileLockJournaler, error) {
-	l := flock.New(path)
+func (w *HumanWriter) ID() string { return w.id }
 
-	var locked bool
-	var err error
-
-	if ctx != nil {
-		locked, err = l.TryLockContext(ctx, 25*time.Millisecond)
-	} else {
-		locked, err = l.TryLock()
-	}
-
+// Write writes the given event into the writer.
+func (w *HumanWriter) Write(ev cronmon.Event) error {
+	b, err := json.Marshal(ev)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to acquire lock")
+		w.log.Println(ev.Type())
+		return nil
 	}
 
-	if !locked {
-		return nil, errors.New("lock not acquired")
-	}
-
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_SYNC, 0600)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to open file")
-	}
-
-	return &FileLockJournaler{
-		Writer: Writer{"file:" + path, f},
-		f:      f,
-		l:      l,
-	}, nil
-}
-
-// Close closes the file and releases the flock.
-func (f *FileLockJournaler) Close() error {
-	f.f.Close()
-	return f.l.Unlock()
+	w.log.Printf("%s: %s\n", ev.Type(), string(b))
+	return nil
 }

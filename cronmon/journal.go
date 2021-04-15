@@ -32,6 +32,7 @@ func ReadPreviousState(r JournalReader) (*PreviousState, error) {
 	state := PreviousState{
 		Processes: map[string]int{},
 	}
+	hasQuit := false
 	deleted := map[int]struct{}{}
 
 	for {
@@ -49,14 +50,19 @@ func ReadPreviousState(r JournalReader) (*PreviousState, error) {
 			state.StartedAt = time
 			return &state, nil
 
+		case *EventQuit:
+			hasQuit = true
+
 		case *EventProcessExited:
 			deleted[data.PID] = struct{}{}
 
 		case *EventProcessSpawned:
-			// If the process is still alive, then it shouldn't be in the
-			// deleted map, since it'll appear later.
-			if _, ok := deleted[data.PID]; !ok {
-				state.Processes[data.File] = data.PID
+			if !hasQuit {
+				// If the process is still alive, then it shouldn't be in the
+				// deleted map, since it'll appear later.
+				if _, ok := deleted[data.PID]; !ok && !hasQuit {
+					state.Processes[data.File] = data.PID
+				}
 			}
 		}
 	}

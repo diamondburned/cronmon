@@ -2,8 +2,9 @@ package cronmon
 
 import (
 	"context"
-	"os"
 	"path/filepath"
+	"sync"
+	"syscall"
 	"time"
 
 	"git.unix.lgbt/diamondburned/cronmon/cronmon/exec"
@@ -12,7 +13,7 @@ import (
 
 // ProcessWaitTimeout is the time to wait for a process to gracefully exit until
 // forcefully terminating (and finally SIGKILLing) it.
-var ProcessWaitTimeout = time.Minute
+var ProcessWaitTimeout = 3 * time.Second
 
 // ProcessRetryBackoff is a list of backoff durations when a process fails to
 // start. The last duration is used repetitively.
@@ -20,7 +21,7 @@ var ProcessRetryBackoff = []time.Duration{
 	0,
 	5 * time.Second,
 	15 * time.Second,
-	30 * time.Second,
+	time.Minute,
 }
 
 // Process monitors an individual process. It is capable of self-monitoring the
@@ -35,16 +36,15 @@ type Process struct {
 	cancel context.CancelFunc
 
 	file string
-	arg0 string
 
-	evCh chan func()
-	dead chan struct{}
-	done chan error
+	startCmd chan bool     // monitor, start command, true for restart
+	exited   chan struct{} // process, process signal
+	finalize chan error    // monitor, dead routine signal
 
 	startProc func() (exec.Process, error)
-	statusDir bool
 
 	// states
+	pmut sync.Mutex
 	proc exec.Process
 }
 
@@ -62,161 +62,75 @@ func NewProcess(ctx context.Context, dir, file string, j Journaler) *Process {
 		ctx:    ctx,
 		cancel: cancel,
 
-		j:    j,
-		file: file,
-		arg0: arg0,
-		evCh: make(chan func()),
-		dead: make(chan struct{}, 1),
-		done: make(chan error, 1),
+		j:        j,
+		file:     file,
+		startCmd: make(chan bool),
+		exited:   make(chan struct{}, 1), // 1-buffered to hold in same routine
+		finalize: make(chan error),
 
-		statusDir: true,
 		startProc: func() (exec.Process, error) {
 			return exec.StartProcess([]string{arg0})
 		},
 	}
-
-	proc.startProc = proc.startProcess
 
 	go proc.startMonitor()
 
 	return proc
 }
 
-// startProcess reserves the PID file and starts the process.
-func (proc *Process) startProcess() (exec.Process, error) {
-	// Create the PID file if we have the status directory.
-	path := ppidPath(proc.j, proc.file)
-
-	// Only allow the child process to read from the file.
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0700)
-	if err != nil {
-		// This error isn't fatal, so we only warn.
-		proc.j.Write(&EventWarning{
-			Component: "process",
-			Error:     "failed to make status file at " + path,
-		})
-
-		return exec.StartProcess([]string{proc.arg0})
-	}
-
-	// Spawn the process; skip the first 3 file descriptors, as they're stdin,
-	// stdout and stderr.
-	p, err := exec.StartProcessWithFiles([]string{proc.arg0}, []*os.File{nil, nil, nil, f})
-	if err != nil {
-		f.Close()
-		os.Remove(path)
-		return nil, err
-	}
-
-	// There's not much we can do if Remove fails.
-	if err := os.Remove(path); err != nil {
-		proc.j.Write(&EventWarning{
-			Component: "process",
-			Error:     "failed to remove status file: " + err.Error(),
-		})
-	}
-
-	return p, nil
-}
-
-// Takeover takes over this process with the given PID if it was previously
-// owned by the given PPID. The PPID should belong to a previous cronmon
-// instance. If the process fails to be taken over, then it is started normally.
-//
-// If the process is already running, then Takeover does nothing, meaning it
-// will prioritize its own started process.
-func (proc *Process) Takeover(pid int) {
+// Start starts a new process. If the process is already started, then it
+// restarts the existing process.
+func (proc *Process) Start(restart bool) {
 	select {
-	case proc.evCh <- func() { proc.takeover(pid) }:
 	case <-proc.ctx.Done():
+	case proc.startCmd <- restart:
 	}
 }
 
-func (proc *Process) takeover(pid int) {
+func (proc *Process) start(restart bool) {
+	proc.pmut.Lock()
+
 	if proc.proc != nil {
-		return
+		if !restart {
+			proc.pmut.Unlock()
+			return
+		}
+
+		// Guarantee that the current process is stopped before spawning. This
+		// prevents running two instances of the same process.
+		proc.stop(false)
 	}
-
-	statusFile := ppidPath(proc.j, proc.file)
-
-	_, err := os.Stat(statusFile)
-	if err != nil {
-		proc.dead <- struct{}{}
-
-		proc.j.Write(&EventProcessSpawnError{
-			File:   proc.file,
-			Reason: "status file " + statusFile + " not found",
-		})
-		return
-	}
-
-	p, err := exec.FindProcess(pid)
-	if err != nil {
-		// An error would never occur here on Linux. The error would go straight
-		// into Wait, probably.
-		proc.dead <- struct{}{}
-
-		proc.j.Write(&EventWarning{
-			Component: "process",
-			Error:     "FindProcess error: " + err.Error(),
-		})
-		return
-	}
-
-	proc.proc = p
-	proc.startWaiting(false)
-}
-
-// Start starts a new process. If the process is already started, then it does
-// nothing.
-func (proc *Process) Start() {
-	select {
-	case proc.evCh <- proc.start:
-	case <-proc.ctx.Done():
-	}
-}
-
-func (proc *Process) start() {
-	if proc.proc != nil {
-		return
-	}
-
-	p, err := proc.startProc()
-	if err != nil {
-		// Report that the process is dead so the monitor routine can restart
-		// it.
-		proc.dead <- struct{}{}
-
-		proc.j.Write(&EventProcessSpawnError{
-			File:   proc.file,
-			Reason: err.Error(),
-		})
-		return
-	}
-
-	proc.proc = p
-	proc.startWaiting(true)
-}
-
-// startWaiting reports the PID to the journal and starts a waiting routine.
-func (proc *Process) startWaiting(createStatus bool) {
-	// !!!: A critical failure might occur while this section is being executed:
-	// if the PID is not written into the journal in time, then the new cronmon
-	// process won't be aware of the running process. There's not really a way
-	// around this.
-
-	proc.j.Write(&EventProcessSpawned{
-		PID:  proc.proc.PID(),
-		File: proc.file,
-	})
 
 	// Spawn a monitoring goroutine to report to proc.dead.
 	go func() {
-		status := proc.proc.Wait()
+		// No matter the result of this goroutine, always mark the process as
+		// dead for it to be restarted if needed.
+		defer func() { proc.exited <- struct{}{} }()
+
+		p, err := proc.startProc()
+		if err != nil {
+			proc.j.Write(&EventProcessSpawnError{
+				File:   proc.file,
+				Reason: err.Error(),
+			})
+
+			proc.pmut.Unlock()
+			return
+		}
+
+		proc.proc = p
+		proc.pmut.Unlock()
+
+		proc.j.Write(&EventProcessSpawned{
+			PID:  p.PID(),
+			File: proc.file,
+		})
+
+		status := p.Wait()
 
 		ev := EventProcessExited{
-			PID:      status.PID,
 			File:     proc.file,
+			PID:      status.PID,
 			ExitCode: status.Code,
 		}
 
@@ -227,47 +141,45 @@ func (proc *Process) startWaiting(createStatus bool) {
 		// Write to the journal before signaling that the process is dead to
 		// ensure that the journal entry gets written.
 		proc.j.Write(&ev)
-
-		proc.dead <- struct{}{}
 	}()
 }
 
-// Stop stops the process, if it's running. An error is returned if it's not
-// running.
+// Stop stops the process permanently.
 func (proc *Process) Stop() error {
 	proc.cancel()
-	return <-proc.done
+	return <-proc.finalize
 }
 
-func (proc *Process) stop() error {
+func (proc *Process) stop(acquire bool) error {
+	if acquire {
+		proc.pmut.Lock()
+		defer proc.pmut.Unlock()
+	}
+
 	if proc.proc == nil {
 		// already stopped
 		return nil
 	}
 
-	if err := proc.proc.Signal(os.Interrupt); err != nil {
-		// Try to SIGKILL if we can't SIGINT (looking at you, Windows).
+	defer func() { proc.proc = nil }()
+
+	if err := proc.proc.Signal(syscall.SIGTERM); err != nil {
+		// Try to SIGKILL if we can't SIGTERM as a fallback.
 		proc.proc.Kill()
 	}
 
 	after := time.NewTimer(proc.WaitTimeout)
 	defer after.Stop()
 
-	for {
-		select {
-		case <-after.C:
-			// Timeout reached and the program still hasn't exited yet. Send
-			// SIGKILL and bail, since there's not much we can do here.
-			proc.proc.Kill()
+	select {
+	case <-after.C:
+		proc.proc.Kill()
+		<-proc.exited
 
-			// Wait until the process routine exits.
-			<-proc.dead
+		return errors.New("timed out waiting for program to exit")
 
-			return errors.New("timed out waiting for program to exit")
-
-		case <-proc.dead:
-			return nil
-		}
+	case <-proc.exited:
+		return nil
 	}
 }
 
@@ -277,6 +189,7 @@ func (proc *Process) startMonitor() {
 	var start <-chan time.Time // start backoff
 	var timer *time.Timer
 	var resetTime time.Time // deadline to consider app successfully started
+	var restart bool
 
 	backoff := -1 // backoff counter
 
@@ -293,15 +206,19 @@ func (proc *Process) startMonitor() {
 	for {
 		select {
 		case <-proc.ctx.Done():
-			proc.done <- proc.stop()
 			cleanupTimer()
+			proc.finalize <- proc.stop(true)
 			return
 
+		case restart = <-proc.startCmd:
+			start = dummyTimeCh()
+
 		case <-start:
-			proc.start()
+			proc.start(restart)
+			restart = false
 			cleanupTimer()
 
-		case <-proc.dead:
+		case <-proc.exited:
 			proc.proc = nil
 			cleanupTimer()
 
@@ -318,11 +235,14 @@ func (proc *Process) startMonitor() {
 			resetTime = now.Add(resetDura)
 			timer = time.NewTimer(startDura)
 			start = timer.C
-
-		case fn := <-proc.evCh:
-			fn()
 		}
 	}
+}
+
+func dummyTimeCh() <-chan time.Time {
+	ch := make(chan time.Time, 1)
+	ch <- time.Time{}
+	return ch
 }
 
 func nextBackoff(backoffs []time.Duration, ix *int) (start, reset time.Duration) {
