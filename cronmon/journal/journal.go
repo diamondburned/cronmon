@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"git.unix.lgbt/diamondburned/cronmon/cronmon"
-	"git.unix.lgbt/diamondburned/cronmon/cronmon/journal/backwardio"
+	"github.com/diamondburned/backwardio"
 	"github.com/gofrs/flock"
 	"github.com/pkg/errors"
 )
@@ -140,7 +140,7 @@ func newFileLockJournaler(ctx context.Context, path string) (*FileLockJournaler,
 
 	return &FileLockJournaler{
 		Writer: Writer{json.NewEncoder(f), "file:" + path},
-		Reader: Reader{backwardio.NewBackwardsReader(f)},
+		Reader: Reader{backwardio.NewScanner(f)},
 		f:      f,
 		l:      l,
 	}, nil

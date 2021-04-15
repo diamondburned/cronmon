@@ -4,9 +4,7 @@ package exec
 
 import (
 	"os"
-	"path/filepath"
 	"runtime"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -15,13 +13,6 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/sys/unix"
 )
-
-// ProcFd resolves the given process' procfs for the requested process' file
-// descriptor. The returned string is the path to the file, if any.
-func ProcFd(pid, fd int) (string, error) {
-	procFd := filepath.Join("/", "proc", strconv.Itoa(pid), "fd", strconv.Itoa(fd))
-	return os.Readlink(procFd)
-}
 
 // Process describes a command process.
 type Process interface {
@@ -127,9 +118,9 @@ func (mock *sleepProcess) Signal(sig os.Signal) error {
 	var status int32
 
 	switch sig {
-	case os.Interrupt:
+	case syscall.SIGINT, syscall.SIGTERM: // catchable
 		status = 0
-	case os.Kill:
+	case syscall.SIGKILL:
 		status = -1
 	default:
 		return errors.New("unknown signal")

@@ -1,4 +1,4 @@
-// Packge cronmon is the core of the cronmon application, providing individual
+// Package cronmon is the core of the cronmon application, providing individual
 // components that work independently, while communicating with eachother
 // concurrently over channels.
 //

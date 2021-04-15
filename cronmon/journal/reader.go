@@ -8,19 +8,19 @@ import (
 	"time"
 
 	"git.unix.lgbt/diamondburned/cronmon/cronmon"
-	"git.unix.lgbt/diamondburned/cronmon/cronmon/journal/backwardio"
+	"github.com/diamondburned/backwardio"
 	"github.com/pkg/errors"
 )
 
 // Reader implements a primitive reader that can parse journals written by
 // Writer from top to bottom.
 type Reader struct {
-	b *backwardio.BackwardsReader
+	b *backwardio.Scanner
 }
 
 // NewReader creates a new journal reader.
 func NewReader(r io.ReadSeeker) *Reader {
-	return &Reader{backwardio.NewBackwardsReader(r)}
+	return &Reader{backwardio.NewScanner(r)}
 }
 
 // Read reads a single entry, starting from the top file. An EOF error is

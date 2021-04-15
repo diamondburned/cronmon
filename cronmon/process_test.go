@@ -23,7 +23,7 @@ func TestProcess(t *testing.T) {
 		proc.startProc = func() (exec.Process, error) {
 			return exec.NewSleepProcess(forever, 0, nextPID()), nil
 		}
-		proc.Start()
+		proc.Start(false)
 
 		// Stop guarantees that the background routines would've been exited by
 		// the time the function returns.
@@ -47,7 +47,7 @@ func TestProcess(t *testing.T) {
 		proc.startProc = func() (exec.Process, error) {
 			return exec.NewSleepProcess(forever, forever, nextPID()), nil
 		}
-		proc.Start()
+		proc.Start(false)
 		// Ignore the error since we can check the journal.
 		proc.Stop()
 
@@ -76,7 +76,7 @@ func TestProcess(t *testing.T) {
 			}
 			return nil, errors.New("before")
 		}
-		proc.Start()
+		proc.Start(false)
 
 		time.Sleep(time.Millisecond / 2)
 
@@ -108,7 +108,7 @@ func TestProcess(t *testing.T) {
 			}
 			return exec.NewSleepProcess(0, 0, nextPID()), nil
 		}
-		proc.Start()
+		proc.Start(false)
 
 		var count int
 		for range newProcCh {

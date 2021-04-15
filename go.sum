@@ -1,3 +1,5 @@
+github.com/diamondburned/backwardio v0.0.0-20210413053500-d9cf8f22162e h1:rirtBGkqQYVJap3rcue/JrPBsqn8RxRYNOnzWCsmX+E=
+github.com/diamondburned/backwardio v0.0.0-20210413053500-d9cf8f22162e/go.mod h1:GZofT5qmNc+MLXvitMrKZRVYPKNsDTDnNwNPmbLE2Jk=
 github.com/fsnotify/fsnotify v1.4.9 h1:hsms1Qyu0jgnwNXIxa+/V/PDsU6CfLf6CNO8H7IWoS4=
 github.com/fsnotify/fsnotify v1.4.9/go.mod h1:znqG4EE+3YCdAaPaxE2ZRY/06pZUdp0tY4IgpuI1SZQ=
 github.com/gofrs/flock v0.8.0 h1:MSdYClljsF3PbENUUEx85nkWfJSGfzYI9yEBZOJz6CY=
